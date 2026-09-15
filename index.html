@@ -103,7 +103,10 @@
        page edge for the whole expand instead of snapping ~268px wider only after the grid
        transition had already finished. min-width:100% covers the collapsed state, where the
        grid is narrower than the viewport. */
-    width:calc(var(--c1w) + var(--cx) + var(--cx) + var(--gap) + var(--gap) + var(--padx));min-width:100%;
+    /* min(..., 100vw) keeps the header inside the viewport: on a narrow screen the three
+       grid tracks plus gaps can add up to more than the viewport, and the raw calc() would
+       then stick ~23px out and add a horizontal scrollbar. */
+    width:min(100vw, calc(var(--c1w) + var(--cx) + var(--cx) + var(--gap) + var(--gap) + var(--padx)));min-width:0;
     transition:width .45s cubic-bezier(.4,0,.2,1)}
   /* Suppressed while the window is being resized, otherwise the header lags behind the drag. */
   html.no-w-anim .head-row{transition:none}
@@ -159,10 +162,18 @@
   .legend{display:flex;gap:18px;flex-wrap:wrap;justify-content:center;margin-top:10px;font-size:12.5px;color:var(--muted)}
   .legend span{display:inline-flex;align-items:center;gap:6px}
   .legend i{width:18px;height:6px;border-radius:3px;display:inline-block}
-  .live-chips{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+  /* The 7 KPI pills are required to stay on a SINGLE line (English labels are long
+     enough that they used to wrap onto a second row in the collapsed layout).
+     The row never wraps; an auto-fit pass (see fitLiveChips below) applies a small
+     uniform scale to the row until it fits, so the pills stay one line at every
+     viewport width without hand-tuned per-breakpoint font sizes. */
+  .live-chips{display:flex;gap:10px;flex-wrap:nowrap;justify-content:center;align-items:flex-end;margin-top:10px}
+  .live-chips .chip{flex:0 0 auto;white-space:nowrap}
   .chip{background:var(--card);border:1px solid var(--sep);border-radius:var(--r-sm);padding:9px 13px;font-size:12.5px;box-shadow:var(--shadow-sm);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);transition:transform .2s var(--ease),box-shadow .2s var(--ease)}
   .chip:hover{transform:translateY(-1px);box-shadow:var(--shadow-md)}
   .chip b{font-size:15px}
+  /* Zoom is applied to a inner wrapper so the measured offsetWidth already includes it */
+  .live-chips .chips-inner{display:flex;gap:10px;flex-wrap:nowrap;justify-content:center;transform-origin:center center}
 
   /* Layout */
   .grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0}
@@ -443,6 +454,7 @@
         <span><i style="background:#EC407A"></i>Secondary Supply</span>
       </div>
       <div class="live-chips">
+        <div class="chips-inner">
         <div class="chip">Heat Load <b id="chip_q">12.2</b> MW</div>
         <div class="chip">Primary Current Flow <b id="chip_fo">300</b> m³/h</div>
         <div class="chip">Primary Target Flow <b id="chip_fn">210</b> m³/h</div>
@@ -450,6 +462,7 @@
         <div class="chip">Secondary Current Flow <b id="chip_so">700</b> m³/h</div>
         <div class="chip">Secondary Target Flow <b id="chip_sn">420</b> m³/h</div>
         <div class="chip">Secondary Flow Reduction <b id="chip_sr">40</b> %</div>
+        </div>
       </div>
   </div>
 
@@ -1090,6 +1103,39 @@
   // The toggle event does not bubble, so listen in the capture phase on the container
   inputsEl.addEventListener("toggle", syncInputsExpanded, true);
   syncInputsExpanded();
+
+  // Keep the 7 KPI pills on one line. English labels are long enough that the row used
+  // to wrap in the collapsed layout. Rather than hand-tuning a font size per breakpoint,
+  // measure the natural row width and scale the row down just enough to fit; at the
+  // default (wide) viewport the scale is 1 and nothing changes visually.
+  // A CSS transform is used so the layout box stays the un-scaled size and no reflow
+  // (and no wrap) can be triggered by the scaling itself.
+  function fitLiveChips(){
+    var wrap = document.querySelector(".live-chips");
+    if (!wrap) return;
+    var inner = wrap.querySelector(".chips-inner");
+    if (!inner) return;
+    var avail = wrap.clientWidth;
+    if (avail <= 0) return;
+    // Clear the transform BEFORE measuring: scrollWidth reflects the rendered (scaled)
+    // box, so measuring while a scale is applied would compound on every resize.
+    inner.style.transform = "";
+    var natural = inner.scrollWidth;
+    if (natural <= 0) return;
+    var s = Math.min(1, avail / natural);
+    // No artificial floor: the requirement is that all 7 pills stay on ONE line, so the
+    // row scales down exactly as far as it needs to. 0.85 at a 1600px viewport, ~0.79 at
+    // 1280px - still comfortably legible, and no horizontal overflow is created.
+    if (s < 0.6) s = 0.6;
+    inner.style.transform = (s < 0.999) ? "scale(" + s.toFixed(4) + ")" : "";
+    // A scaled row also occupies less vertical space; keep the container from reserving
+    // the un-scaled height and leaving a gap under the pills.
+    var h = inner.offsetHeight * s;
+    wrap.style.height = (s < 0.999 && h > 0) ? Math.round(h) + "px" : "";
+  }
+  window.addEventListener("resize", fitLiveChips);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitLiveChips);
+  fitLiveChips();
 
   // Resizing changes --cx, which would animate the header width and make it lag behind the drag.
   // Suppress the width transition for the duration of the resize burst.
